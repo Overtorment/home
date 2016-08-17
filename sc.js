@@ -1,17 +1,39 @@
 // LOAD followers on page
+var gsom = $$;
+var ololo = window;
+var scrollto = 0;
+var loaded = false;
+setInterval(function(){
+	if (gsom('.sc-button-follow').length < 7000)  {  
+		scrollto += 500; ololo.scrollTo(0, scrollto); 
+	} else { // LOADED!
+		if (loaded) return;
+		loaded = true;
+		//dofollow();
+		dounfollow();
 
+	}
+}, 1000);
+
+
+
+// LOAD followers on page OLD
+
+/*
 var scrollto = 0;
 var loadmore = function(){
     scrollto += 500;
     window.scrollTo(0, scrollto);
     setTimeout(function(){
-		if ($$('.sc-button-follow').length < 4500) {			
+		if ($$('.sc-button-follow').length < 5500) {			
 			console.log('Loaded ', $$('.sc-button-follow').length);
 			return loadmore();
+		} else {
+			dounfollow(); // next step
 		}
-    }, 500);
+    }, 400);
 }
-
+*/
 
 
 
@@ -21,8 +43,11 @@ var loadmore = function(){
 
 var countdown_unfollow = 150;
 var dounfollow = function(){
-	if ( countdown_unfollow <= 0 ) return;
-	var a = $('.sc-button-follow') ;
+	if ( countdown_unfollow <= 0 ) { 
+ 		dofollow(); // next step
+		return;
+	}
+	var a = jq('.sc-button-follow') ;
 	if (a && a.innerText == "Following") {
 		var nickname = false;
 		if (a.parentNode.parentNode.childNodes[2]) {
@@ -48,11 +73,11 @@ var dounfollow = function(){
 // FOLLOW people
 
 
-var countdown = 100;
-
+var countdown = 150;
+var jq = $;
 var dofollow = function(){
 	if ( countdown <= 0 ) return;
-	var a = $('.sc-button-follow') ;
+	var a = jq('.sc-button-follow') ;
 	if (a.innerText == "Follow") {
 		var nickname = false;
 		nickname = a.parentNode.parentNode.childNodes[2].innerText;
