@@ -23,4 +23,4 @@ export PATH=$PATH:/usr/bin/node-v8.4.0-linux-x64/bin
 export GOPATH=~/go/
 export LC_ALL="en_US.UTF-8"
 PATH=$PATH:~/bin
-
+export PS1='\[\033[01;32m\]\u@`/bin/hostname -f`\[\033[01;34m\] \w $(__git_ps1 "(%s)") \$\[\033[00m\] '
