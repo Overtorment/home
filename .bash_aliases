@@ -9,12 +9,17 @@ fi
 alias grep='grep --color=always'
 alias ll='ls -lah'
 alias less='less -SR'
+alias gti='git'
 export PATH="$HOME/.yarn/bin:$PATH"
 alias fuck='sudo $(history -p \!\!)'
 alias gitl='git log --oneline'
 export PATH=$PATH:/usr/local/go/bin
-export PATH=$PATH:/usr/bin/node-v8.4.0-linux-x64/bin
-export GOPATH=~/go/
+#export PATH=$PATH:/usr/bin/node-v8.4.0-linux-x64/bin
+export ANDROID_NDK_HOME=/home/overtorment/Android/Sdk/ndk/21.3.6528147
+export GOPATH=~/go
+export GOROOT=/usr/local/go/
+export PATH=$PATH:$GOPATH/bin
 export LC_ALL="en_US.UTF-8"
 PATH=$PATH:~/bin
 export PS1='\[\033[01;32m\]\u@`/bin/hostname -f`\[\033[01;34m\] \w $(__git_ps1 "(%s)") \$\[\033[00m\] '
+export JAVA_HOME=/usr/lib/jvm/java-8-oracle/
