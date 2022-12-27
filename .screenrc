@@ -1,6 +1,15 @@
 # the following two lines give a two-line status, with the current window highlighted
-hardstatus alwayslastline
-hardstatus string '%{= kG}[%{G}%H%? %1`%?%{g}][%= %{= kw}%-w%{+b yk} %n*%t%?(%u)%? %{-}%+w %=%{g}][%{B}%d/%m/%Y %{W}%c%{g}]'
+#hardstatus alwayslastline
+#hardstatus string '%{= kG}[%{G}%H%? %1`%?%{g}][%= %{= kw}%-w%{+b yk} %n*%t%?(%u)%? %{-}%+w %=%{g}][%{B}%d/%m/%Y %{W}%c%{g}]'
+#
+
+backtick 1 5 5 true
+termcapinfo rxvt* 'hs:ts=\E]2;:fs=\007:ds=\E]2;\007'
+hardstatus string "%H (%n: %t)"
+#caption string "%{= kw}[%H]  %{= kw}%-Lw%{= kG}%{+b}[%n %t]%{-b}%{= kw}%+Lw%1`"
+caption string '%{= kG}[%{G}%H%? %1`%?%{g}][%= %{= kw}%-w%{+b yk} %n*%t%?(%u)%? %{-}%+w %=%{g}][%{B}%d/%m/%Y %{W}%c%{g}]'
+caption always
+
 
 # huge scrollback buffer
 defscrollback 5000
