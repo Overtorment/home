@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Start local llama.cpp router (Zed / OpenCode / OpenAI-compatible on :8080).
+set -euo pipefail
+unit="llama-server-gemma.service"
+systemctl --user start "$unit"
+systemctl --user --no-pager status "$unit"

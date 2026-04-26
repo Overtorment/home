@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Stop local llama.cpp router and unload loaded models from RAM/VRAM.
+set -euo pipefail
+unit="llama-server-gemma.service"
+systemctl --user stop "$unit"
+echo "Stopped $unit (models unloaded)."

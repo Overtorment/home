@@ -1,0 +1,192 @@
+#!/usr/bin/env bash
+# Show llama.cpp server slot status: generation rate (tok/s) and ETA per slot.
+# Uses GET /v1/models and GET /slots. If the server was started with --metrics, an extra
+# /metrics line is shown when the endpoint returns data.
+#
+# "left" / ETA use a budget the server exposes: params.max_tokens / params.n_predict (same
+# value) and next_token.n_decoded. When the cap is finite:  left = max(0, cap - n_decoded).
+# When cap is -1 (no limit), the true finish is EOS / stop strings / tools — unknown, so
+# ETA is shown as "-". next_token.n_remain is used as a fallback when it is >= 0.
+#
+# Env: LLAMA_API_URL            (default http://127.0.0.1:8080)
+#      LLAMA_API_KEY            (optional; Authorization: Bearer)
+#      LLAMA_CURL_CONNECT       (default 15)   connect timeout, seconds
+#      LLAMA_CURL_MAX_TIME      (default 120)  per-request cap, seconds (raise if /slots is slow under load)
+#      LLAMA_STATUS_SAMPLE_SEC  (default 1.0)  pause between the two /slots calls, seconds
+
+set -euo pipefail
+
+: "${LLAMA_CURL_CONNECT:=15}"
+: "${LLAMA_CURL_MAX_TIME:=120}"
+: "${LLAMA_STATUS_SAMPLE_SEC:=1.0}"
+
+BASE="${LLAMA_API_URL:-http://127.0.0.1:8080}"
+BASE="${BASE%/}"
+
+curl_common=(-fsS --connect-timeout "$LLAMA_CURL_CONNECT" --max-time "$LLAMA_CURL_MAX_TIME")
+if [[ -n "${LLAMA_API_KEY:-}" ]]; then
+  curl_common+=(-H "Authorization: Bearer ${LLAMA_API_KEY}")
+fi
+
+die() { echo "llamacpp-status: $*" >&2; exit 1; }
+
+# --- fetch models
+models_json=$(curl "${curl_common[@]}" "$BASE/v1/models") || die "cannot reach $BASE (is the server up?)"
+
+if echo "$models_json" | jq -e '.error' >/dev/null 2>&1; then
+  die "$(echo "$models_json" | jq -r '.error.message? // .error // @json')"
+fi
+
+is_router=0
+if echo "$models_json" | jq -e '(.data[0] // empty) | has("status")' >/dev/null 2>&1; then
+  is_router=1
+fi
+
+declare -a MODEL_NAMES=()
+if [[ "$is_router" -eq 1 ]]; then
+  while IFS= read -r line; do
+    [[ -n "$line" ]] && MODEL_NAMES+=("$line")
+  done < <(echo "$models_json" | jq -r '.data[]? | select(.status.value? == "loaded" or .status.value? == "sleeping") | .id')
+  if [[ ${#MODEL_NAMES[@]} -eq 0 ]]; then
+    die "no running models in router (expected status loaded or sleeping)"
+  fi
+else
+  m=$(echo "$models_json" | jq -r '(.data[0].id // .data[0].model) // empty')
+  [[ -n "$m" ]] || die "no model in /v1/models response"
+  MODEL_NAMES=("$m")
+fi
+
+get_slots() {
+  local model_id="${1-}"
+  if [[ "$is_router" -eq 1 ]]; then
+    curl "${curl_common[@]}" -G "$BASE/slots" --data-urlencode "model=$model_id"
+  else
+    curl "${curl_common[@]}" "$BASE/slots"
+  fi
+}
+
+get_metrics_tps() {
+  local out
+  if [[ "$is_router" -eq 1 ]]; then
+    out=$(curl "${curl_common[@]}" -G "$BASE/metrics" --data-urlencode "model=$1" 2>/dev/null) || return 1
+  else
+    out=$(curl "${curl_common[@]}" "$BASE/metrics" 2>/dev/null) || return 1
+  fi
+  echo "$out" | awk '/^llamacpp:predicted_tokens_seconds / { tps=$NF } END { if (tps!="") print tps; else exit 1 }'
+}
+
+sum_decoded() {
+  echo "$1" | jq '[.[] | (.next_token | if type == "array" then .[0] else . end) | .n_decoded // 0] | add'
+}
+
+if command -v column >/dev/null 2>&1; then
+  format_table() { column -t -s $'\t'; }
+else
+  format_table() { cat; }
+fi
+
+print_slot_rows() {
+  jq -n -r --argjson s1 "$1" --argjson s2 "$2" --arg dt "$3" '
+    def nt: .next_token | if type == "array" then .[0] else . end;
+    def cap: (.params // {} | ((.max_tokens // .n_predict) // -1) | if . == null then -1 else . end);
+    # Finite cap: left = cap - n_decoded. Unlimited: server n_remain is unreliable; use inf until done.
+    def left_budget($d):
+      (cap as $c
+        | if ($c|tonumber) >= 0 then ([$c - $d, 0] | max)
+          else null
+        end);
+    def api_rem: (nt | .n_remain // -1);
+    def has_next: (nt | .has_next_token // true);
+    $s1 as $s1 | $s2 as $s2
+    | ( [ $s1[] | {(.id|tostring): (nt | .n_decoded // 0)} ] | add // {} ) as $d1m
+    | $s2[]
+    | ( .id|tostring ) as $i
+    | ( $d1m[$i] // 0 | tonumber) as $d1
+    | ( nt | .n_decoded // 0 | tonumber) as $d2
+    | ( ($d2 - $d1) / ($dt|tonumber) ) as $tps
+    | (left_budget($d2)) as $lb
+    | (api_rem) as $ar
+    | ( (cap|tonumber) as $c
+        | if $lb != null then $lb
+          elif $c < 0 then (if (has_next|not) then 0 else -1 end)
+          elif $ar >= 0 then $ar
+          else -1
+        end) as $left
+    | ( if (has_next | not) then 0
+        elif $tps <= 0.0001 then null
+        elif $lb != null and $lb >= 0 then (($lb / $tps) * 10 | round / 10)
+        elif (cap|tonumber) < 0 then null
+        elif $ar >= 0 then (($ar / $tps) * 10 | round / 10)
+        else null
+      end) as $eta
+    | (cap) as $nmax
+    | [ $i, (if .is_processing then "yes" else "no" end), ($d2|tostring),
+        (if $left < 0 then "inf" else ($left|tostring) end),
+        (if $tps > 0.0001 then ($tps * 10 | round / 10 | tostring) else "-" end),
+        (if $eta != null and $eta == 0 then "0s"
+         elif $eta != null then ($eta|tostring) + "s"
+         else "-"
+         end),
+        (if $nmax == null then "-" elif ($nmax|tonumber) < 0 then "inf" else ($nmax|tostring) end)
+      ] | @tsv' 2>/dev/null
+}
+
+echo "llama.cpp  ${BASE}"
+echo
+
+for model_id in "${MODEL_NAMES[@]}"; do
+  if [[ ${#MODEL_NAMES[@]} -gt 1 ]]; then
+    echo
+  fi
+
+  if [[ "$is_router" -eq 1 ]]; then
+    st=$(echo "$models_json" | jq -r --arg m "$model_id" '.data[] | select(.id==$m) | .status.value? // "?"')
+    echo "${model_id}  ·  ${st}"
+  else
+    echo "${model_id}"
+  fi
+  echo
+
+  s1_json=$(get_slots "$model_id") || die "GET /slots failed for ${model_id}"
+  if echo "$s1_json" | jq -e '.error' >/dev/null 2>&1; then
+    echo "  /slots: $(echo "$s1_json" | jq -r '.error.message? // @json')"
+    continue
+  fi
+
+  t1=$(date +%s%N)
+  # shellcheck disable=SC2086
+  sleep $LLAMA_STATUS_SAMPLE_SEC
+  s2_json=$(get_slots "$model_id") || die "second GET /slots failed for ${model_id}"
+  t2=$(date +%s%N)
+  dt=$(awk -v t1="$t1" -v t2="$t2" 'BEGIN { printf "%.2f", (t2 - t1) / 1e9 }')
+
+  tps_instant=0
+  d1=$(sum_decoded "$s1_json")
+  d2=$(sum_decoded "$s2_json")
+  dd=$(awk -v a="$d2" -v b="$d1" 'BEGIN { print a - b }')
+  if awk -v d="$dd" -v t="$dt" 'BEGIN { exit !(d > 0 && t > 0) }'; then
+    tps_instant=$(awk -v d="$dd" -v t="$dt" 'BEGIN { printf "%.1f", d / t }')
+  else
+    tps_instant="0"
+  fi
+
+  printf '  Throughput  %s tok/s  (sample, ~%s s between /slots)\n' "$tps_instant" "$dt"
+  if tps_m=$(get_metrics_tps "$model_id" 2>/dev/null) && [[ -n "${tps_m:-}" ]]; then
+    tps_avg=$(printf '%.1f' "$tps_m" 2>/dev/null) || tps_avg="$tps_m"
+    printf '  Throughput  %s tok/s  (server /metrics, rolling average)\n' "$tps_avg"
+  fi
+
+  echo
+  tab=$'\t'
+  rows_out=$(print_slot_rows "$s1_json" "$s2_json" "$dt" || true)
+  if [[ -z "$rows_out" ]]; then
+    echo "  (no slot rows in response)"
+  else
+    {
+      printf 'slot%sbusy%sdecoded%sleft%stok/s%sETA%slimit\n' "$tab" "$tab" "$tab" "$tab" "$tab" "$tab"
+      printf '%s\n' "$rows_out"
+    } | format_table | sed 's/^/  /'
+  fi
+done
+
+echo
