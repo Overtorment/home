@@ -1,5 +1,5 @@
 #export ANDROID_HOME=$HOME/Android/Sdk
-#export ANDROID_SDK_ROOT="/home/overtorment/Android/Sdk/"
+#export ANDROID_SDK_ROOT="~/Android/Sdk/"
 
 cd ~/Android/Sdk/emulator
 ./emulator -list-avds
